@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Ultrasonic Distance Command Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Outfit', sans-serif; }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .glass-input {
+            background: rgba(30, 41, 59, 0.5);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+        .glow-blue {
+            box-shadow: 0 0 25px rgba(14, 165, 233, 0.35);
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-950 min-h-screen text-slate-100 flex flex-col items-center p-4 sm:p-6">
+
+    <header class="w-full max-w-6xl glass-card rounded-2xl p-4 sm:p-6 mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-400/40 flex items-center justify-center glow-blue">
+                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            </div>
+            <div>
+                <h1 class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">ESP32 Sonic-Link</h1>
+                <p class="text-xs text-blue-300/70">HC-SR04 Precision Distance Regulator</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <div id="wifi-badge" class="flex items-center gap-2 px-3 py-1.5 rounded-xl glass-input text-xs font-medium text-emerald-400">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Connected (Interactive Simulator)</span>
+            </div>
+            <button onclick="toggleSimulatorMode()" class="px-4 py-2 rounded-xl bg-blue-600/40 hover:bg-blue-500/50 border border-blue-400/30 text-xs font-semibold transition-all shadow-lg">
+                Toggle Simulator / Live WS
+            </button>
+        </div>
+    </header>
+
+    <main class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- Distance Gauge & Quick Metrics -->
+        <div class="glass-card rounded-2xl p-6 flex flex-col items-center justify-between text-center relative overflow-hidden">
+            <div class="absolute -top-12 -right-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl"></div>
+            <h2 class="text-sm font-semibold text-blue-300 uppercase tracking-wider mb-2">Live Distance Reading</h2>
+            
+            <div class="my-6 relative flex items-center justify-center">
+                <div class="w-48 h-48 rounded-full border-4 border-blue-500/20 flex items-center justify-center glow-blue">
+                    <div class="text-center">
+                        <span id="distance-display" class="text-5xl font-extrabold text-cyan-300 tracking-tight">--</span>
+                        <span class="text-lg font-medium text-blue-400/80 block mt-1">CM</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="alert-banner" class="w-full py-2.5 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-medium transition-all">
+                Status: Normal Range
+            </div>
+        </div>
+
+        <!-- Real-time Chart Section -->
+        <div class="glass-card rounded-2xl p-6 lg:col-span-2 flex flex-col justify-between">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-sm font-semibold text-blue-300 uppercase tracking-wider">Distance Telemetry Stream</h2>
+                <span class="text-xs text-blue-400/60">Real-time HC-SR04 Graph</span>
+            </div>
+            <div class="h-64 sm:h-72 w-full">
+                <canvas id="distanceChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Distance Regulator Control Panel -->
+        <div class="glass-card rounded-2xl p-6 lg:col-span-3">
+            <h2 class="text-sm font-semibold text-blue-300 uppercase tracking-wider mb-4">Distance Regulator & Controls</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Threshold Slider -->
+                <div class="glass-input rounded-xl p-4 flex flex-col justify-between">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-xs font-semibold text-blue-200">Alert Threshold (cm)</label>
+                        <span id="threshold-val" class="text-cyan-300 font-bold text-sm">50 cm</span>
+                    </div>
+                    <input type="range" id="threshold-slider" min="5" max="300" value="50" class="w-full accent-cyan-400 cursor-pointer" oninput="updateThreshold(this.value)">
+                    <span class="text-[10px] text-blue-300/50 mt-2">Triggers buzzer/LED output below this distance</span>
+                </div>
+
+                <!-- Measurement Mode Selector -->
+                <div class="glass-input rounded-xl p-4 flex flex-col justify-between">
+                    <label class="text-xs font-semibold text-blue-200 mb-2">Measurement Mode</label>
+                    <select id="mode-select" onchange="updateMode(this.value)" class="w-full bg-slate-900/80 border border-blue-400/30 rounded-xl p-2.5 text-xs text-cyan-300 font-medium focus:outline-none">
+                        <option value="continuous">Continuous Ultra-Fast</option>
+                        <option value="pulsed">Pulsed Power-Save</option>
+                        <option value="eco">Eco Mode (Low Frequency)</option>
+                    </select>
+                    <span class="text-[10px] text-blue-300/50 mt-2">Optimizes sensor polling frequency</span>
+                </div>
+
+                <!-- Regulator Toggle Switch -->
+                <div class="glass-input rounded-xl p-4 flex flex-col justify-between">
+                    <label class="text-xs font-semibold text-blue-200 mb-2">Regulator System</label>
+                    <div class="flex items-center justify-between mt-1">
+                        <span id="regulator-status-text" class="text-xs font-medium text-emerald-400">Active</span>
+                        <button onclick="toggleRegulator()" id="regulator-btn" class="px-4 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-xs font-bold text-emerald-300 transition-all">
+                            Disable Regulator
+                        </button>
+                    </div>
+                    <span class="text-[10px] text-blue-300/50 mt-2">Controls automated relay triggers</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let ws;
+        let wsConnected = false;
+        let isSimulatorMode = true;
+        let simulatorInterval = null;
+
+        const wsUrlAP = "ws://192.168.4.1:81";
+        const wsUrlServer = "wss://your-backend-service.onrender.com/ws/dashboard";
+
+        // Initialize Chart.js
+        const ctx = document.getElementById('distanceChart').getContext('2d');
+        const distanceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Distance (cm)',
+                    data: [],
+                    borderColor: '#38bdf8',
+                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                    borderWidth: 2.5,
+                    tension: 0.35,
+                    fill: true,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+                    y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#94a3b8', font: { size: 10 } }, min: 0 }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        let currentThreshold = 50;
+        let currentMode = "continuous";
+        let regulatorActiveState = true;
+
+        function startSimulator() {
+            if (simulatorInterval) clearInterval(simulatorInterval);
+            let baseDist = 45;
+            simulatorInterval = setInterval(() => {
+                // Simulate realistic fluctuating distance
+                baseDist += (Math.random() * 10 - 5);
+                if (baseDist < 10) baseDist = 12;
+                if (baseDist > 250) baseDist = 240;
+
+                updateDashboard({
+                    distance: baseDist,
+                    threshold: currentThreshold,
+                    mode: currentMode,
+                    regulator: regulatorActiveState
+                });
+            }, 1000);
+        }
+
+        function connectWebSocket() {
+            if (isSimulatorMode) {
+                startSimulator();
+                return;
+            }
+
+            try {
+                ws = new WebSocket(wsUrlServer);
+
+                ws.onopen = () => {
+                    wsConnected = true;
+                    const badge = document.getElementById('wifi-badge');
+                    badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-xl glass-input text-xs font-medium text-emerald-400";
+                    badge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span><span>Connected (Cloud Server)</span>`;
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.distance !== undefined) {
+                            updateDashboard(data);
+                        }
+                    } catch (e) {
+                        console.error("Parse error", e);
+                    }
+                };
+
+                ws.onerror = (err) => {
+                    console.warn("WebSocket blocked or unavailable, switching to simulator.", err);
+                    isSimulatorMode = true;
+                    startSimulator();
+                };
+
+                ws.onclose = () => {
+                    wsConnected = false;
+                };
+            } catch (e) {
+                isSimulatorMode = true;
+                startSimulator();
+            }
+        }
+
+        function toggleSimulatorMode() {
+            isSimulatorMode = !isSimulatorMode;
+            const badge = document.getElementById('wifi-badge');
+            if (isSimulatorMode) {
+                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-xl glass-input text-xs font-medium text-emerald-400";
+                badge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span><span>Connected (Interactive Simulator)</span>`;
+                startSimulator();
+            } else {
+                if (simulatorInterval) clearInterval(simulatorInterval);
+                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-xl glass-input text-xs font-medium text-amber-400";
+                badge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span><span>Connecting to Cloud WS...</span>`;
+                connectWebSocket();
+            }
+        }
+
+        function updateThreshold(val) {
+            currentThreshold = parseFloat(val);
+            document.getElementById('threshold-val').innerText = val + " cm";
+            sendConfig();
+        }
+
+        function updateMode(val) {
+            currentMode = val;
+            sendConfig();
+        }
+
+        function toggleRegulator() {
+            regulatorActiveState = !regulatorActiveState;
+            const btn = document.getElementById('regulator-btn');
+            const txt = document.getElementById('regulator-status-text');
+            if (regulatorActiveState) {
+                btn.innerText = "Disable Regulator";
+                btn.className = "px-4 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-xs font-bold text-emerald-300 transition-all";
+                txt.innerText = "Active";
+                txt.className = "text-xs font-medium text-emerald-400";
+            } else {
+                btn.innerText = "Enable Regulator";
+                btn.className = "px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/40 text-xs font-bold text-rose-300 transition-all";
+                txt.innerText = "Inactive";
+                txt.className = "text-xs font-medium text-rose-400";
+            }
+            sendConfig();
+        }
+
+        function sendConfig() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    threshold: currentThreshold,
+                    mode: currentMode,
+                    regulator: regulatorActiveState
+                }));
+            }
+        }
+
+        function updateDashboard(data) {
+            const dist = data.distance;
+            document.getElementById('distance-display').innerText = dist > 0 ? dist.toFixed(1) : "OUT";
+
+            // Alert banner status
+            const banner = document.getElementById('alert-banner');
+            if (dist <= currentThreshold && dist > 0) {
+                banner.className = "w-full py-2.5 px-4 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-sm font-semibold animate-pulse";
+                banner.innerText = `⚠️ TARGET DETECTED WITHIN THRESHOLD (${dist.toFixed(1)} cm)`;
+            } else {
+                banner.className = "w-full py-2.5 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-medium";
+                banner.innerText = "Status: Normal Range";
+            }
+
+            // Update Chart
+            const timeLabel = new Date().toLocaleTimeString();
+            if (distanceChart.data.labels.length > 20) {
+                distanceChart.data.labels.shift();
+                distanceChart.data.datasets[0].data.shift();
+            }
+            distanceChart.data.labels.push(timeLabel);
+            distanceChart.data.datasets[0].data.push(dist > 0 ? dist : 0);
+            distanceChart.update('none');
+        }
+
+        window.onload = () => {
+            startSimulator();
+        };
+    </script>
+</body>
+</html>
